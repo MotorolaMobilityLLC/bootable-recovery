@@ -314,7 +314,7 @@ static int produce_block_map(const char* path, const char* map_file, const char*
 
     unique_fd wfd(-1);
     if (encrypted) {
-        wfd = open(blk_dev, O_WRONLY | O_SYNC);
+        wfd = open(blk_dev, O_WRONLY);
         if (!wfd) {
             ALOGE("failed to open fd for writing: %s", strerror(errno));
             return kUncryptBlockOpenError;
