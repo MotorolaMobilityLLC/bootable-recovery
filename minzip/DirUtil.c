@@ -194,7 +194,12 @@ dirUnlinkHierarchy(const char *path)
 
     /* a file, so unlink it */
     if (!S_ISDIR(st.st_mode)) {
-        return unlink(path);
+        if (unlink(path) < 0) {
+            printf("unlink of %s failed due to %s\n", path, strerror(errno));
+            return -1;
+        } else {
+            return 0;
+        }
     }
 
     /* a directory, so open handle */
@@ -223,6 +228,7 @@ dirUnlinkHierarchy(const char *path)
         int save = errno;
         closedir(dir);
         errno = save;
+        printf("readdir/unlink of %s failed due to %s\n", path, strerror(errno));
         return -1;
     }
 
@@ -232,5 +238,10 @@ dirUnlinkHierarchy(const char *path)
     }
 
     /* delete target directory */
-    return rmdir(path);
+    if (rmdir(path) < 0) {
+        printf("removing directory %s failed due to %s\n", path, strerror(errno));
+        return -1;
+    } else {
+        return 0;
+    }
 }
