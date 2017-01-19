@@ -148,7 +148,7 @@ static struct fstab* fstab = nullptr;
 typedef struct fstab_rec Volume;
 
 #define FS_IOC_SHUTDOWN   _IOR('X', 125, __u32)
-#define FS_GOING_DOWN_FULLSYNC     0x0
+#define FS_GOING_STOP_GC     0x3
 
 
 static int write_at_offset(unsigned char* buffer, size_t size, int wfd, off64_t offset) {
@@ -303,11 +303,11 @@ static int produce_block_map(const char* path, const char* map_file, const char*
         Volume* v = volume_for_path(path);
         ALOGI("File system type is %s",v->fs_type);
         if(v != NULL && strcasecmp(v->fs_type, "f2fs") == 0) {
-            int flag = 0;
+            int flag = FS_GOING_STOP_GC;
             int ret = ioctl(fd.get(), FS_IOC_SHUTDOWN, &flag);
 
             if (ret != 0) {
-                ALOGE("failed to shutdown the filesystem for block_map on %s due to %s\n", path, strerror(errno));
+                ALOGE("failed to stop GC on  the filesystem for block_map on %s due to %s\n", path, strerror(errno));
             }
         }
     }
