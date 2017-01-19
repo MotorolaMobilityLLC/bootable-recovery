@@ -145,6 +145,11 @@ static const std::string UNCRYPT_STATUS = "/cache/recovery/uncrypt_status";
 static const std::string UNCRYPT_SOCKET = "uncrypt";
 
 static struct fstab* fstab = nullptr;
+typedef struct fstab_rec Volume;
+
+#define FS_IOC_SHUTDOWN   _IOR('X', 125, __u32)
+#define FS_GOING_DOWN_FULLSYNC     0x0
+
 
 static int write_at_offset(unsigned char* buffer, size_t size, int wfd, off64_t offset) {
     if (TEMP_FAILURE_RETRY(lseek64(wfd, offset, SEEK_SET)) == -1) {
@@ -187,6 +192,10 @@ static struct fstab* read_fstab() {
     }
 
     return fstab;
+}
+
+Volume* volume_for_path(const char* path) {
+    return fs_mgr_get_entry_for_mount_point(fstab, path);
 }
 
 static const char* find_block_device(const char* path, bool* encryptable, bool* encrypted) {
@@ -238,7 +247,7 @@ static bool find_uncrypt_package(const std::string& uncrypt_path_file, std::stri
 }
 
 static int produce_block_map(const char* path, const char* map_file, const char* blk_dev,
-                             bool encrypted, int socket) {
+                             bool encrypted, int socket, int debug) {
     std::string err;
     if (!android::base::RemoveFileIfExists(map_file, &err)) {
         ALOGE("failed to remove the existing map file %s: %s", map_file, err.c_str());
@@ -290,9 +299,22 @@ static int produce_block_map(const char* path, const char* map_file, const char*
         return kUncryptFileOpenError;
     }
 
+    if (debug == 0) {
+        Volume* v = volume_for_path(path);
+        ALOGI("File system type is %s",v->fs_type);
+        if(v != NULL && strcasecmp(v->fs_type, "f2fs") == 0) {
+            int flag = 0;
+            int ret = ioctl(fd.get(), FS_IOC_SHUTDOWN, &flag);
+
+            if (ret != 0) {
+                ALOGE("failed to shutdown the filesystem for block_map on %s due to %s\n", path, strerror(errno));
+            }
+        }
+    }
+
     unique_fd wfd(-1);
     if (encrypted) {
-        wfd = open(blk_dev, O_WRONLY);
+        wfd = open(blk_dev, O_WRONLY | O_SYNC);
         if (!wfd) {
             ALOGE("failed to open fd for writing: %s", strerror(errno));
             return kUncryptBlockOpenError;
@@ -422,8 +444,12 @@ static int produce_block_map(const char* path, const char* map_file, const char*
     return 0;
 }
 
-static int uncrypt(const char* input_path, const char* map_file, const int socket) {
-    ALOGI("update package is \"%s\"", input_path);
+static int uncrypt(const char* input_path, const char* map_file, const int socket, int debug) {
+
+    const char* uncrypt_version = "1.1";
+    ALOGI("update package is \"%s\" and uncrypt version is \"%s\"", input_path, uncrypt_version);
+
+    //ALOGI("update package is \"%s\"", input_path);
 
     // Turn the name of the file we're supposed to convert into an
     // absolute path, so we can find what filesystem it's on.
@@ -457,7 +483,7 @@ static int uncrypt(const char* input_path, const char* map_file, const int socke
     // and /sdcard we leave the file alone.
     if (strncmp(path, "/data/", 6) == 0) {
         ALOGI("writing block map %s", map_file);
-        return produce_block_map(path, map_file, blk_dev, encrypted, socket);
+        return produce_block_map(path, map_file, blk_dev, encrypted, socket, debug);
     }
 
     return 0;
@@ -470,7 +496,7 @@ static void log_uncrypt_error_code(UncryptErrorCode error_code) {
     }
 }
 
-static bool uncrypt_wrapper(const char* input_path, const char* map_file, const int socket) {
+static bool uncrypt_wrapper(const char* input_path, const char* map_file, const int socket, int debug) {
     // Initialize the uncrypt error to kUncryptErrorPlaceholder.
     log_uncrypt_error_code(kUncryptErrorPlaceholder);
 
@@ -487,7 +513,7 @@ static bool uncrypt_wrapper(const char* input_path, const char* map_file, const 
     CHECK(map_file != nullptr);
 
     auto start = std::chrono::system_clock::now();
-    int status = uncrypt(input_path, map_file, socket);
+    int status = uncrypt(input_path, map_file, socket, debug);
     std::chrono::duration<double> duration = std::chrono::system_clock::now() - start;
     int count = static_cast<int>(duration.count());
 
@@ -581,6 +607,7 @@ int main(int argc, char** argv) {
     enum { UNCRYPT, SETUP_BCB, CLEAR_BCB } action;
     const char* input_path = nullptr;
     const char* map_file = CACHE_BLOCK_MAP.c_str();
+    int debug = 0;
 
     if (argc == 2 && strcmp(argv[1], "--clear-bcb") == 0) {
         action = CLEAR_BCB;
@@ -592,6 +619,7 @@ int main(int argc, char** argv) {
         input_path = argv[1];
         map_file = argv[2];
         action = UNCRYPT;
+        debug = 1;
     } else {
         usage(argv[0]);
         return 2;
@@ -628,7 +656,7 @@ int main(int argc, char** argv) {
     bool success = false;
     switch (action) {
         case UNCRYPT:
-            success = uncrypt_wrapper(input_path, map_file, socket_fd.get());
+            success = uncrypt_wrapper(input_path, map_file, socket_fd.get(), debug);
             break;
         case SETUP_BCB:
             success = setup_bcb(socket_fd.get());
