@@ -32,6 +32,9 @@
 #include "wipe.h"
 #endif
 #endif
+#ifdef USE_F2FS
+#include "mtdutils/blkutils.h"
+#endif
 
 #define PRELOADER_OFFSET_EMMC   (0x800)
 
