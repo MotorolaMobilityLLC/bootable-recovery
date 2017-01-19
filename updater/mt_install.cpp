@@ -213,7 +213,14 @@ static int mt_MountFn_eMMC(char **mount_point, char **result, char **fs_type, ch
     *fs_type = strdup("ext4");
     free(*partition_type);
     *partition_type = strdup("EMMC");
-
+    #ifdef USE_F2FS
+    if((strcmp(*mount_point, "/data") == 0) && (strcmp(*fs_type, "ext4") == 0) &&
+		identify_fs(*location) == FS_F2FS) {
+        printf("mount /data with f2fs\n");
+        strncpy(*fs_type, "f2fs", 4);
+        has_mount_options = false;
+    }
+    #endif
     if (mount(*location, *mount_point, *fs_type, MS_NOATIME | MS_NODEV | MS_NODIRATIME, has_mount_options ? mount_options : "") < 0) {
         uiPrintf(state, "%s: failed to mount %s at %s: %s\n", name, *location, *mount_point, strerror(errno));
         *result = strdup("");
@@ -380,6 +387,17 @@ int mt_FormatFn(char **mount_point, char **result, char **fs_type, char **locati
 #ifdef USE_EXT4
 #ifndef MTK_NAND_MTK_FTL_SUPPORT
         else {
+            #ifdef USE_F2FS
+            if(strcmp(*mount_point, "/data") ==0) {
+                printf("erase userdata with f2fs\n");;
+                if(blkdiscard_partition(*location, doValidateErase()) != 0) {
+                    fprintf(stderr,"blkdiscard on partition %s failed\n",*location);
+                    *result = strdup("");
+                    return MT_FN_FAIL_EXIT;
+               }
+               *result = *location;
+            } else {
+            #endif//USE_F2FS
             int status = make_ext4fs(*location, atoll(fs_size), *mount_point, sehandle);
             if (status != 0) {
                 fprintf(stderr, "%s: make_ext4fs failed (%d) on %s", name, status, *location);
@@ -387,6 +405,9 @@ int mt_FormatFn(char **mount_point, char **result, char **fs_type, char **locati
                 return MT_FN_FAIL_EXIT;
             }
             *result = *location;
+            #ifdef USE_F2FS
+            }
+            #endif
         }
 #endif
 #endif

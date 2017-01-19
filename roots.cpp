@@ -49,6 +49,9 @@
 #ifdef USE_EXT4
 #include "cryptfs.h"
 #endif
+#ifdef USE_F2FS
+#include "blkutils.h"
+#endif
 
 static struct fstab *fstab = NULL;
 
@@ -213,6 +216,9 @@ int ensure_path_mounted_at(const char* path, const char* mount_point) {
         return mtd_mount_partition(partition, mount_point, v->fs_type, 0);
     } else if (strcmp(v->fs_type, "ext4") == 0 ||
                strcmp(v->fs_type, "squashfs") == 0 ||
+               #ifdef USE_F2FS
+               strcmp(v->fs_type, "f2fs") == 0 ||
+               #endif
                strcmp(v->fs_type, "vfat") == 0) {
 #ifdef MTK_NAND_MTK_FTL_SUPPORT
         if (strstr(v->blk_device, "ftl") ){
@@ -600,7 +606,15 @@ int format_volume(const char* volume, const char* directory) {
             , v->blk_device, length, volume, directory);
             result = make_ext4fs_directory(v->blk_device, length, volume, sehandle, directory);
 #endif
-
+        #ifdef USE_F2FS
+        } else if(strcmp(v->fs_type, "f2fs") == 0) {
+                LOGE("blkdiscard erase userdata with f2fs");
+                if(blkdiscard_partition(v->blk_device,doValidateErase()) != 0) {
+                    LOGE("\n blkdiscard on partition %s failed",v->blk_device);
+                    return -1;
+                }
+                return 0;
+        #endif//USE_F2FS
         } else {   /* Has to be f2fs because we checked earlier. */
             if (v->key_loc != NULL && strcmp(v->key_loc, "footer") == 0 && length < 0) {
                 LOGE("format_volume: crypt footer + negative length (%zd) not supported on %s\n", length, v->fs_type);

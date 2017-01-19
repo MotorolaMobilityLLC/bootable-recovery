@@ -204,6 +204,14 @@ Value* MountFn(const char* name, State* state, int argc, Expr* argv[]) {
             }
             result = mount_point;
         } else {
+    #ifdef USE_F2FS
+        if((strcmp(mount_point, "/data") == 0) && (strcmp(fs_type, "ext4") == 0) &&
+		identify_fs(location) == FS_F2FS) {
+            printf("mount /data with f2fs\n");
+            strncpy(fs_type, "f2fs", 4);
+            has_mount_options = false;
+        }
+    #endif
             if (mount(location, mount_point, fs_type,
                       MS_NOATIME | MS_NODEV | MS_NODIRATIME,
                       has_mount_options ? mount_options : "") < 0) {
@@ -388,6 +396,21 @@ Value* FormatFn(const char* name, State* state, int argc, Expr* argv[]) {
         result = location;
 #ifdef USE_EXT4
     } else if (strcmp(fs_type, "ext4") == 0) {
+        #ifdef USE_F2FS
+        if(strcmp(mount_point, "/data") ==0) {
+            const MountedVolume* vol = find_mounted_volume_by_mount_point(mount_point);
+            printf("erase userdata with f2fs\n");
+            if(vol)
+               unmount_mounted_volume(vol);
+
+            if(blkdiscard_partition(location, doValidateErase()) != 0) {
+                fprintf(stderr,"blkdiscard on partition %s failed\n",location);
+                result = strdup("");
+                goto done;
+           }
+           result = location;
+        } else {
+        #endif//USE_F2FS
         int status = make_ext4fs(location, atoll(fs_size), mount_point, sehandle);
         if (status != 0) {
             printf("%s: make_ext4fs failed (%d) on %s",
@@ -396,6 +419,9 @@ Value* FormatFn(const char* name, State* state, int argc, Expr* argv[]) {
             goto done;
         }
         result = location;
+        #ifdef USE_F2FS
+        }
+        #endif
     } else if (strcmp(fs_type, "f2fs") == 0) {
         char *num_sectors;
         if (asprintf(&num_sectors, "%lld", atoll(fs_size) / 512) <= 0) {

@@ -26,6 +26,10 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/mount.h>
+#ifdef USE_F2FS
+#include "ext4_utils.h"
+#include "ext4.h"
+#endif
 #if 1 //wschen 2012-10-23
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -223,3 +227,79 @@ remount_read_only(const MountedVolume* volume)
                  MS_NOATIME | MS_NODEV | MS_NODIRATIME |
                  MS_RDONLY | MS_REMOUNT, 0);
 }
+
+#ifdef USE_F2FS
+/*
+ * Search the first 16 sectors, or 4*4k blocks.  This covers the EXT4 alignment
+ * requirement and will also find the F2FS backup SB.
+ */
+#define TOTAL_SECTORS 16
+#define F2FS_SUPER_MAGIC 0xF2F52010
+#define EXT4_SUPER_MAGIC 0xEF53
+
+static int is_f2fs(char *block)
+{
+    __le32 *sb;
+    int i;
+
+    for (i = 0; i < TOTAL_SECTORS; i++) {
+        sb = (__le32 *)(block + (i * 512));     /* magic is in the first word */
+        if (le32_to_cpu(sb[0]) == F2FS_SUPER_MAGIC) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static int is_ext4(char *block)
+{
+    struct ext4_super_block *sb = (struct ext4_super_block *)block;
+    int i;
+
+    for (i = 0; i < TOTAL_SECTORS * 512; i += sizeof(struct ext4_super_block), sb++) {
+        if (le32_to_cpu(sb->s_magic) == EXT4_SUPER_MAGIC) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int identify_fs(char *blk_device)
+{
+    char *block = NULL;
+    int fd = -1;
+    int identified = FS_UNKNOWN;
+
+    block = (char *)calloc(1, TOTAL_SECTORS * 512);
+    if (!block) {
+        goto out;
+    }
+    if ((fd = open(blk_device, O_RDONLY)) < 0) {
+        goto out;
+    }
+    if (read(fd, block, TOTAL_SECTORS * 512) != TOTAL_SECTORS * 512) {
+        goto out;
+    }
+
+    identified = FS_UNKNOWN;
+    if (is_f2fs(block)) {
+        identified = FS_F2FS;
+    } else if(is_ext4(block)) {
+        identified = FS_EXT4;
+    }
+
+out:
+    if (fd >= 0) {
+        close(fd);
+    }
+    if (block) {
+        free(block);
+    }
+    if (identified == FS_UNKNOWN) {
+        printf("Did not recognize file system on %s\n", blk_device);
+    }
+    return identified;
+}
+#endif

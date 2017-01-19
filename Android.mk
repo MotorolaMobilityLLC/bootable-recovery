@@ -112,6 +112,11 @@ ifeq ($(BOARD_CACHEIMAGE_PARTITION_SIZE),)
 LOCAL_REQUIRED_MODULES := recovery-persist recovery-refresh
 endif
 
+ifeq ($(TARGET_USERIMAGES_USE_F2FS),true)
+LOCAL_C_INCLUDES += bootable/recovery/mtdutils
+LOCAL_CFLAGS += -DUSE_F2FS
+endif
+
 include $(LOCAL_PATH)/mt_recovery.mk
 
 include $(BUILD_EXECUTABLE)

@@ -34,6 +34,15 @@ int unmount_mounted_volume(const MountedVolume *volume);
 
 int remount_read_only(const MountedVolume* volume);
 
+#ifdef USE_F2FS
+enum fs_type {
+	FS_UNKNOWN,
+	FS_EXT4,
+	FS_F2FS
+};
+int identify_fs(char *blk_device);
+#endif
+
 #ifdef __cplusplus
 }
 #endif
