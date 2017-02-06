@@ -20,6 +20,7 @@
  */
 
 #include <ctype.h>
+#include <libgen.h>
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -45,7 +46,8 @@
 #include <android-base/parseint.h>
 #include <android-base/strings.h>
 #include <android-base/stringprintf.h>
-
+//#include <fs_mgr.h>
+#include <libgen.h>
 #include "bootloader.h"
 #include "applypatch/applypatch.h"
 #include "cutils/android_reboot.h"
@@ -53,10 +55,12 @@
 #include "cutils/properties.h"
 #include "edify/expr.h"
 #include "error_code.h"
+#include "common.h"
+#include "openssl/sha.h"
 #include "minzip/DirUtil.h"
 #include "mtdutils/mounts.h"
 #include "mtdutils/mtdutils.h"
-#include "openssl/sha.h"
+
 #include "ota_io.h"
 #include "updater.h"
 #include "install.h"
@@ -114,6 +118,7 @@ char* PrintSha1(const uint8_t* digest) {
     return buffer;
 }
 
+#define PROC_CMDLINE_FILENAME   "/proc/cmdline"
 // mount(fs_type, partition_type, location, mount_point)
 //
 //    fs_type="yaffs2" partition_type="MTD"     location=partition
@@ -527,6 +532,49 @@ Value* DeleteFn(const char* name, State* state, int argc, Expr* argv[]) {
     return StringValue(strdup(buffer));
 }
 
+Value* DeleteCheckFn(const char* name, State* state, int argc, Expr* argv[]) {
+    char** paths = (char**)malloc(argc * sizeof(char*));
+    int i;
+
+    if (argc <= 0) {
+        return ErrorAbort(state, "%s(): expected at least 1 argument, got %d arguments",
+                                  name, argc);
+    }
+
+    for (i = 0; i < argc; ++i) {
+        paths[i] = Evaluate(state, argv[i]);
+        if (paths[i] == NULL) {
+            int j;
+            for (j = 0; j < i; j++) {
+                free(paths[j]);
+            }
+            free(paths);
+            return NULL;
+        }
+    }
+
+    int success = true;
+    for (i = 0; i < argc; ++i) {
+        if(access(paths[i],F_OK) == -1) {
+            //Do nothing as file delete is confirmed.
+            if (errno != ENOENT) {
+                printf("access function failed for %s errno %d edesc %s\n", paths[i], errno, strerror(errno));
+                success = false;
+                break;
+            }
+        }
+        else {
+            printf("%s is seen on the device.  delete_file_check failed\n", paths[i]);
+            success = false;
+            break;
+        }
+    }
+    for (i = 0; i < argc; ++i) {
+        free(paths[i]);
+    }
+    free(paths);
+    return StringValue(success ? strdup("t"):strdup(""));
+}
 
 Value* ShowProgressFn(const char* name, State* state, int argc, Expr* argv[]) {
     if (argc != 2) {
@@ -865,6 +913,49 @@ static struct perm_parsed_args ParsePermArgs(State * state, int argc, char** arg
     return parsed;
 }
 
+
+// symlink target src1 src2 ...
+// check previously existing src1, src2, etc for validation.
+Value* CheckSymlinkFn(const char* name, State* state, int argc, Expr* argv[]) {
+    if (argc == 0) {
+        return ErrorAbort(state, "%s() expects 1+ args, got %d", name, argc);
+    }
+    char* target;
+    target = Evaluate(state, argv[0]);
+    if (target == NULL) return NULL;
+
+    char** srcs = ReadVarArgs(state, argc-1, argv+1);
+    if (srcs == NULL) {
+        free(target);
+        return NULL;
+    }
+
+    int i, flag = true;
+    for (i = 0; i < argc-1; ++i) {
+        char buf[PATH_MAX];
+        int len = readlink(srcs[i], buf, sizeof(buf) - 1);
+        if (len < 0) {
+            fprintf(stderr, "%s: buf %s read error %s to %s: %s\n",
+               name, buf, srcs[i], target, strerror(errno));
+            flag = false;
+            break;
+        }
+        buf[len] = 0;
+        if (strcmp(buf, target) != 0) {
+            fprintf(stderr, "%s: No symlink from %s to %s: %s\n",
+                name, srcs[i], target, strerror(errno));
+            flag = false;
+            break;
+        }
+    }
+    for (i = 0; i < argc -1; ++i) {
+        free(srcs[i]);
+    }
+    free(srcs);
+    return StringValue(strdup(flag ?  "t" : ""));
+}
+
+
 static int ApplyParsedPerms(
         State * state,
         const char* filename,
@@ -1029,6 +1120,41 @@ Value* GetPropFn(const char* name, State* state, int argc, Expr* argv[]) {
     return StringValue(strdup(value));
 }
 
+static Value* MkDirFn(const char* name, State* state, int argc, Expr* argv[]) {
+    if (argc != 1) {
+        return ErrorAbort(state, "%s() expects 1 arg, got %d", name, argc);
+    }
+    char** args = ReadVarArgs(state, argc, argv);
+    if (args == NULL){ //return -1;
+	   return ErrorAbort(state, "Null arguments passed to MkDirFn");
+	}
+
+    int i;
+
+    char* path = args[0];
+
+    int success = true;
+    struct stat st;
+    int err = stat(path, &st);
+    if (err == -1 && errno == ENOENT) {
+        fprintf(stderr,"%s: directory doesn't exist errno:%d path:%s", name, errno, path);
+        if (dirCreateHierarchy(path, 0777, NULL, 0, sehandle) != 0) {
+            fprintf(stderr,"%s: directory doesn't exist errno:%d path:%s", name, errno, path);
+            success = false;
+            goto done;
+        }
+    } else {
+        fprintf(stderr, "Error %d(%s) while getting stats of the file %s\n", errno, strerror(errno), path);
+        success = false;
+    }
+
+done:
+    for (i = 0; i < argc; ++i) {
+        free(args[i]);
+    }
+    free(args);
+    return StringValue(strdup(success ? "t" : ""));
+}
 
 // file_getprop(file, key)
 //
@@ -1337,6 +1463,39 @@ Value* ApplyPatchCheckFn(const char* name, State* state,
     return StringValue(strdup(result == 0 ? "t" : ""));
 }
 
+
+Value* PrintSuperBlockInfoFn(const char* name, State* state,
+                         int argc, Expr* argv[]) {
+/*
+    char* partition_name = NULL;
+    int mount_count = 0;
+    char last_mount_path[64];
+    time_t last_mount_time;
+
+    if (argc < 1) {
+        return ErrorAbort(state, "%s(): expected at least 1 arg, got %d",
+                          name, argc);
+    }
+
+    if (ReadArgs(state, argv, 1, &partition_name) < 0) {
+        return NULL;
+    }
+
+    int result = print_super_block_info(partition_name, &mount_count, last_mount_path, &last_mount_time);
+    if (result == 0) {
+        uiPrintf(state, "Mount count = %d", mount_count);
+        uiPrintf(state, "Last mount path = %s", last_mount_path);
+        uiPrintf(state, "Last mount time = %d -> %s", last_mount_time, ctime(&last_mount_time));
+    }
+    if(partition_name != NULL)
+        free(partition_name);
+    return StringValue(strdup(result == 0 ? "t" : ""));
+*/
+    //MTK_OTA_FIX, miaotao1, do nothing for now, just return true
+    return StringValue(strdup("t"));
+}
+
+
 // This is the updater side handler for ui_print() in edify script. Contents
 // will be sent over to the recovery side for on-screen display.
 Value* UIPrintFn(const char* name, State* state, int argc, Expr* argv[]) {
@@ -1489,10 +1648,21 @@ Value* ReadFileFn(const char* name, State* state, int argc, Expr* argv[]) {
         if (v->data != nullptr) {
             memcpy(v->data, fc.data.data(), fc.data.size());
             v->size = fc.data.size();
+        }else{
+             ErrorAbort(state, "%s() loading \"%s\" failed: %s",
+                        name, filename, strerror(errno));
         }
     }
     free(filename);
     return v;
+}
+
+Value* FormatCacheFn(const char* name, State* state, int argc, Expr* argv[])
+{
+    fprintf(stderr,"\n Formatting of Cache is required \n");
+    UpdaterInfo* ui = (UpdaterInfo*)(state->cookie);
+    fprintf(ui->cmd_pipe, "factoryreset %s \n", "cache");
+    return StringValue(strdup("t"));
 }
 
 // Immediately reboot the device.  Recovery is not finished normally,
@@ -1675,6 +1845,44 @@ Value* Tune2FsFn(const char* name, State* state, int argc, Expr* argv[]) {
     return StringValue(strdup("t"));
 }
 
+Value* IsHardwareSecuredFn(const char* name, State* state, int argc, Expr* argv[]){
+    FILE *fp = NULL;
+    char contents[2049];
+    ssize_t nbytes;
+    char *shw = NULL;
+    char *result = strdup("");
+
+    if ((fp=fopen(PROC_CMDLINE_FILENAME,"r"))==NULL){
+        fprintf(stderr,"Can't open %s\n", PROC_CMDLINE_FILENAME);
+        goto done;
+    }
+
+    nbytes = fread(contents, 1, 2048, fp);
+
+    if (nbytes <= 0) {
+        goto done;
+    }
+    contents[nbytes] = '\0';
+
+    shw = strstr(contents,"secure_hardware");
+    if (shw != NULL && ((shw + 16) < (contents + 2048))) {
+        if(shw[16]=='1') {
+            result = strdup("t");
+            printf("It is a Secure Hardware\n");
+        }
+        else {
+            printf("It is not a Secure Hardware\n");
+        }
+    }
+    else {
+        printf("Cant find if it is secured hardware\n");
+    }
+
+done:
+    if (fp)
+        fclose(fp);
+    return StringValue(result);
+}
 void RegisterInstallFunctions() {
     RegisterFunction("mount", MountFn);
     RegisterFunction("is_mounted", IsMountedFn);
@@ -1727,4 +1935,18 @@ void RegisterInstallFunctions() {
     RegisterFunction("enable_reboot", EnableRebootFn);
     RegisterFunction("tune2fs", Tune2FsFn);
     mt_RegisterInstallFunctions();
+
+
+    //Start Motorola API. 
+    //RegisterFunction("set_backup_flag", SetBackupFlagFn); //Motorola, grxv63, 31-Jan-2014, IKVPREL1KK-4364.
+    RegisterFunction("delete_file_check", DeleteCheckFn);
+    RegisterFunction("checksymlink", CheckSymlinkFn);
+    RegisterFunction("mkdir", MkDirFn);
+    RegisterFunction("do_format_cache", FormatCacheFn);
+
+    //RegisterFunction("apply_raw_image", ApplyRawImgFn);
+    RegisterFunction("is_hardware_secured", IsHardwareSecuredFn);
+    //RegisterFunction("format_after_gpt", FormatAfterGPTFn);
+
+    RegisterFunction("print_superblock_info", PrintSuperBlockInfoFn);
 }

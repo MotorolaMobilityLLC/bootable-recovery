@@ -125,6 +125,10 @@ static const char *LAST_LOG_FILE = "/cache/recovery/last_log";
 static const int KEEP_LOG_COUNT = 10;
 // We will try to apply the update package 5 times at most in case of an I/O error.
 static const int EIO_RETRY_COUNT = 4;
+//Begin Motorola. fmpr73 30/7/2012 IKJBREL1-173
+static char log_name_buffer[512];
+static char *log_name = NULL;
+//End Motorola
 static const int BATTERY_READ_TIMEOUT_IN_SEC = 20;
 // GmsCore enters recovery mode to install package when having enough battery
 // percentage. Normally, the threshold is 40% without charger and 20% with charger.
@@ -551,6 +555,20 @@ void copy_logs() {
     sync();
 }
 
+
+//MTK_OTA_FIX, MOTO_OTA_PORTING, miaotao1, Write update result file according moto OTA client requriments
+//Begin Motorola. fmpr73 30/7/2012 IKJBREL1-173
+static void write_result(const char *update_file, const char *result) {
+    if (update_file == NULL) {
+        return;
+    }
+    if (result == NULL) {
+        result = "failure";
+    }
+    snprintf(log_name_buffer, sizeof(log_name_buffer), "/cache/block.map.%s", result);
+    log_name = log_name_buffer;
+}
+//End Motorola
 // clear the recovery command and prepare to boot a (hopefully working) system,
 // copy our log file to cache as well (for the system to read), and
 // record any intent we were asked to communicate back to the system.
@@ -1788,9 +1806,11 @@ int main(int argc, char **argv) {
             log_failure_code(kBootreasonInBlacklist, update_package);
             status = INSTALL_SKIPPED;
         } else {
+            char* update_result = "success";
 #if 0
             status = install_package(update_package, &should_wipe_cache,
                                      TEMPORARY_INSTALL_FILE, true, retry_count);
+            
             if (status == INSTALL_SUCCESS && should_wipe_cache) {
                 wipe_cache(false, device);
             }
@@ -1823,7 +1843,9 @@ int main(int argc, char **argv) {
                 if (is_ro_debuggable()) {
                     ui->ShowText(true);
                 }
+                update_result = "failure";
             }
+            write_result(update_package, update_result);
         }
     } else if (should_wipe_data) {
         if (!wipe_data(false, device)) {
