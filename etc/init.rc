@@ -113,6 +113,7 @@ on property:ro.debuggable=1
     write /sys/class/android_usb/android0/f_ffs/aliases adb
     write /sys/class/android_usb/android0/functions adb
     write /sys/class/android_usb/android0/enable 1
+    write /sys/class/android_usb/android0/iSerial ${ro.serialno}
     start adbd
 
 # Restart adbd so it can run as root
