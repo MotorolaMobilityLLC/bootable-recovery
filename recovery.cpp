@@ -136,6 +136,9 @@ static const int BATTERY_READ_TIMEOUT_IN_SEC = 20;
 static const int BATTERY_OK_PERCENTAGE = 20;
 static const int BATTERY_WITH_CHARGER_OK_PERCENTAGE = 15;
 constexpr const char* RECOVERY_WIPE = "/etc/recovery.wipe";
+//Begin lenovo-sw zhuqj1,create file when finished factory reset for checked
+static const char *factory_reset_flag = "/cache/ctsflag";
+//end lenovo-sw zhuqj1,create file when finished factory reset for checked
 
 RecoveryUI* ui = NULL;
 static const char* locale = "en_US";
@@ -569,6 +572,59 @@ static void write_result(const char *update_file, const char *result) {
     log_name = log_name_buffer;
 }
 //End Motorola
+
+//Begin lenovo-sw zhuqj1,create file when finished factory reset for checked
+static void create_file(const char* file_name){
+    char dir_name[256] = {0};
+    int result = -1;
+    bool first_dir_flag = true;
+    int i = 0;
+    strncpy(dir_name, file_name,strlen(file_name));
+    char *p = strrchr(dir_name, '/');
+    if (p == NULL) {
+        fprintf(stdout, "dir_mane = '%s' has no '/' \n", dir_name);
+        return;
+    } else {
+        *p = 0;
+    }
+    fprintf(stdout, "dir_name = %s\n", dir_name);
+    for(i = 0; i < strlen(dir_name); i++) {
+        if( dir_name[i] == '/' && i > 0) {
+            dir_name[i] = '\0';
+            if(first_dir_flag){
+                first_dir_flag = false;
+                result = ensure_path_mounted(dir_name);
+                if(result != 0){
+                    fprintf(stdout, "dir_name = '%s' does not exist,it can not mount\n", dir_name);
+                    return;
+                }
+            }
+            if(access(dir_name, F_OK) < 0){
+                if(mkdir(dir_name,0777) < 0){
+                    fprintf(stdout, "dir_name = '%s' create error,error=%s\n", dir_name,strerror(errno));
+                    return;
+                }
+                chmod(dir_name,0777);
+            } 
+            dir_name[i] = '/';
+        }      
+    }
+    result = access(file_name,0);
+    if(result == 0){
+        fprintf(stdout, "file_name= '%s' is exist,maybe fw does not delete it\n", file_name);
+        return;
+    }
+    fprintf(stdout, "file_name = '%s' does not exist, create it.\n", file_name);
+    result = open(file_name, O_RDWR | O_CREAT, 0666);
+    if (result == -1) {
+        fprintf(stdout, "cannot open '%s' for output : %s\n", file_name, strerror(errno));
+        return;
+    }
+    chmod(file_name,0666);
+    close(result);
+}
+//end lenovo-sw zhuqj1,create file when finished factory reset for checked
+
 // clear the recovery command and prepare to boot a (hopefully working) system,
 // copy our log file to cache as well (for the system to read), and
 // record any intent we were asked to communicate back to the system.
@@ -1850,7 +1906,11 @@ int main(int argc, char **argv) {
     } else if (should_wipe_data) {
         if (!wipe_data(false, device)) {
             status = INSTALL_ERROR;
-        }
+        }else{
+            //Begin lenovo-sw zhuqj1,create file when finished factory reset for checked
+            create_file(factory_reset_flag);
+            //end lenovo-sw zhuqj1,create file when finished factory reset for checked       		
+	}
     } else if (should_wipe_cache) {
         if (!wipe_cache(false, device)) {
             status = INSTALL_ERROR;
