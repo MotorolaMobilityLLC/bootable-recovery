@@ -45,6 +45,7 @@ FILE* fopen_path(const char *path, const char *mode);
 void ui_print(const char* format, ...);
 
 bool is_ro_debuggable();
+int create_multi_level_abs_paths(const char* dir_paths);
 
 #include "mt_common.h"
 

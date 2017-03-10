@@ -34,6 +34,7 @@
 #include <string.h>
 #include <sys/klog.h>
 #include <sys/stat.h>
+#include <limits.h>
 #if 1
 #include <sys/statfs.h>
 #endif
@@ -573,57 +574,77 @@ static void write_result(const char *update_file, const char *result) {
 }
 //End Motorola
 
-//Begin lenovo-sw zhuqj1,create file when finished factory reset for checked
-static void create_file(const char* file_name){
-    char dir_name[256] = {0};
+//Begin lenovo-sw zhuqj1,create absolute paths file
+int create_multi_level_abs_paths(const char* dir_paths) {
     int result = -1;
-    bool first_dir_flag = true;
+    char dir_name[PATH_MAX] = {0};
     int i = 0;
-    strncpy(dir_name, file_name,strlen(file_name));
+    size_t len = strlcpy(dir_name, dir_paths, sizeof(dir_name));
+    if(len >= PATH_MAX) {
+        fprintf(stdout, "the dir paths exceeds max len limit\n");
+        return -1;
+    }
+    if(dir_name[len -1] != '/') {
+        strcat(dir_name, "/");
+    }
+    for(i = 0; i < strlen(dir_name); i++) {
+        if( dir_name[i] == '/'  && i > 0) {
+            dir_name[i] = '\0';
+            if(access(dir_name, F_OK) < 0) {
+                if(mkdir(dir_name, 0777) < 0) {
+                    fprintf(stdout, "dir_name = '%s' create error,error=%s\n", dir_name,strerror(errno));
+                    return -1;
+                }
+                chmod(dir_name, 0777);
+            }
+            dir_name[i] = '/';
+        }
+    }
+    return 0;
+}
+
+static int create_abs_paths_file(const char* file_name) {
+    char dir_name[PATH_MAX] = {0};
+    int result = -1;
+    size_t len = 0;
+    result = ensure_path_mounted(file_name);
+    if(result != 0) {
+        fprintf(stdout, "file_name = '%s' does not exist,it can not mount\n", file_name);
+        return -1;
+    }
+    len = strlcpy(dir_name, file_name, sizeof(dir_name));
+    if( len >= sizeof(dir_name)) {
+        fprintf(stdout, "file_mane len is too long,has truncated ");
+        return -1;
+    }
     char *p = strrchr(dir_name, '/');
     if (p == NULL) {
         fprintf(stdout, "dir_mane = '%s' has no '/' \n", dir_name);
-        return;
-    } else {
-        *p = 0;
+        return -1;
     }
+    *p = '\0';
     fprintf(stdout, "dir_name = %s\n", dir_name);
-    for(i = 0; i < strlen(dir_name); i++) {
-        if( dir_name[i] == '/' && i > 0) {
-            dir_name[i] = '\0';
-            if(first_dir_flag){
-                first_dir_flag = false;
-                result = ensure_path_mounted(dir_name);
-                if(result != 0){
-                    fprintf(stdout, "dir_name = '%s' does not exist,it can not mount\n", dir_name);
-                    return;
-                }
-            }
-            if(access(dir_name, F_OK) < 0){
-                if(mkdir(dir_name,0777) < 0){
-                    fprintf(stdout, "dir_name = '%s' create error,error=%s\n", dir_name,strerror(errno));
-                    return;
-                }
-                chmod(dir_name,0777);
-            } 
-            dir_name[i] = '/';
-        }      
+    result = create_multi_level_abs_paths(dir_name);
+    if(result != 0) {
+        fprintf(stdout, "dir_name = '%s' create error,error=%s\n", dir_name,strerror(errno));
+        return -1;
     }
-    result = access(file_name,0);
-    if(result == 0){
+    result = access(file_name, 0);
+    if(result == 0) {
         fprintf(stdout, "file_name= '%s' is exist,maybe fw does not delete it\n", file_name);
-        return;
+        return -1;
     }
     fprintf(stdout, "file_name = '%s' does not exist, create it.\n", file_name);
     result = open(file_name, O_RDWR | O_CREAT, 0666);
     if (result == -1) {
         fprintf(stdout, "cannot open '%s' for output : %s\n", file_name, strerror(errno));
-        return;
+        return -1;
     }
-    chmod(file_name,0666);
+    chmod(file_name, 0666);
     close(result);
+    return 0;
 }
-//end lenovo-sw zhuqj1,create file when finished factory reset for checked
+//end lenovo-sw zhuqj1,create absolute paths file
 
 // clear the recovery command and prepare to boot a (hopefully working) system,
 // copy our log file to cache as well (for the system to read), and
@@ -1908,9 +1929,11 @@ int main(int argc, char **argv) {
             status = INSTALL_ERROR;
         }else{
             //Begin lenovo-sw zhuqj1,create file when finished factory reset for checked
-            create_file(factory_reset_flag);
-            //end lenovo-sw zhuqj1,create file when finished factory reset for checked       		
-	}
+            if(create_abs_paths_file(factory_reset_flag) != 0) {
+                ui->Print("create factory_rest_flag file failed .\n");
+            }
+            //end lenovo-sw zhuqj1,create file when finished factory reset for checked
+        }
     } else if (should_wipe_cache) {
         if (!wipe_cache(false, device)) {
             status = INSTALL_ERROR;
