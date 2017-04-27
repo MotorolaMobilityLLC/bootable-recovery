@@ -1917,9 +1917,11 @@ int main(int argc, char **argv) {
                 // If this is an eng or userdebug build, then automatically
                 // turn the text display on if the script fails so the error
                 // message is visible.
-                if (is_ro_debuggable()) {
+                //Begin lenovo-sw zhuqj1,enable recovery menu display for debug
+                //if (is_ro_debuggable()) {
                     ui->ShowText(true);
-                }
+                //}
+               //end lenovo-sw zhuqj1,enable recovery menu display for debug
                 update_result = "failure";
             }
             write_result(update_package, update_result);
