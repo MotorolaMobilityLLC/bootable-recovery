@@ -301,13 +301,15 @@ static int produce_block_map(const char* path, const char* map_file, const char*
 
     if (debug == 0) {
         Volume* v = volume_for_path(path);
-        ALOGI("File system type is %s",v->fs_type);
+        ALOGW("File system type is %s",v->fs_type);
         if(v != NULL && strcasecmp(v->fs_type, "f2fs") == 0) {
             int flag = FS_GOING_STOP_GC;
             int ret = ioctl(fd.get(), FS_IOC_SHUTDOWN, &flag);
 
             if (ret != 0) {
                 ALOGE("failed to stop GC on  the filesystem for block_map on %s due to %s\n", path, strerror(errno));
+            } else {
+                ALOGW("succeed to stop GC on  the filesystem for block_map on %s\n", path);
             }
         }
     }
