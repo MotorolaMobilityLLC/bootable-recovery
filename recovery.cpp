@@ -571,6 +571,9 @@ static void write_result(const char *update_file, const char *result) {
     }
     snprintf(log_name_buffer, sizeof(log_name_buffer), "/cache/block.map.%s", result);
     log_name = log_name_buffer;
+    fprintf(stdout, "log_name = %s \n", log_name);
+    copy_log_file(COMMAND_FILE,log_name,false);
+    chmod(log_name,0644);
 }
 //End Motorola
 
@@ -1920,9 +1923,7 @@ int main(int argc, char **argv) {
                 if (is_ro_debuggable()) {
                     ui->ShowText(true);
                 }
-                update_result = "failure";
             }
-            write_result(update_package, update_result);
         }
     } else if (should_wipe_data) {
         if (!wipe_data(false, device)) {
@@ -1973,6 +1974,10 @@ int main(int argc, char **argv) {
             ui->ShowText(true);
         }
     }
+
+    //Begin lenovo-sw zhuqj1 write update result for moto ota app check
+    write_result(update_package,status==INSTALL_SUCCESS?"success":"failure");
+    //end lenovo-sw zhuqj1 write update result for moto ota app check
 
     mt_main_write_result(status, update_package);
     if (!sideload_auto_reboot && (status == INSTALL_ERROR || status == INSTALL_CORRUPT)) {
